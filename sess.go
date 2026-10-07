@@ -346,6 +346,18 @@ func (s *UDPSession) Write(b []byte) (n int, err error) { return s.WriteBuffers(
 
 // WriteBuffers write a vector of byte slices to the underlying connection
 func (s *UDPSession) WriteBuffers(v [][]byte) (n int, err error) {
+	// An empty write only reports the conn's state. It used to run a full
+	// flush, which callers that probe with Write(nil) paid on every frame.
+	if buffersEmpty(v) {
+		select {
+		case <-s.chSocketWriteError:
+			return 0, s.socketWriteError.Load().(error)
+		case <-s.die:
+			return 0, errors.WithStack(io.ErrClosedPipe)
+		default:
+			return 0, nil
+		}
+	}
 	// The deadline timer is armed only when the write has to wait.
 	var timeout *time.Timer
 	for {
@@ -1508,4 +1520,13 @@ func stopTimer(t *time.Timer) {
 		default:
 		}
 	}
+}
+
+func buffersEmpty(v [][]byte) bool {
+	for _, b := range v {
+		if len(b) > 0 {
+			return false
+		}
+	}
+	return true
 }
